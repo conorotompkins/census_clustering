@@ -73,11 +73,18 @@ vars_all <- bind_rows(vars_age, vars_race, vars_income, vars_pop, vars_benefits,
 ```
 
 ```{r}
-df_acs <- get_acs(variables = vars_all %>% pull(name) %>% unlist(),
+df_map <- get_acs(variables = "B01002F_001",
                   state = "PA",
-                  geography = "county",
-                  geometry = TRUE,
-                  output = "wide") %>% 
+                  geography = "tract",
+                  geometry = TRUE) %>% 
+  select(-c(variable:moe))
+```
+
+```{r eval = FALSE}
+df_acs <- get_acs(variables = vars_education %>% pull(name) %>% unlist(),
+                  state = "PA",
+                  geography = "tract",
+                  geometry = FALSE) %>% 
   left_join(acs_vars %>% select(name, concept), by = c("variable" = "name")) %>% 
   select(GEOID, NAME, variable, concept, everything()) %>% 
   mutate(concept = make_clean_names(concept),
@@ -85,16 +92,21 @@ df_acs <- get_acs(variables = vars_all %>% pull(name) %>% unlist(),
   group_by(variable) %>% 
   mutate(estimate = scale(estimate)) %>% 
   ungroup()
+
+write_csv(df_acs, "output/acs_query_data.csv")
 ```
 
 ```{r}
-df_acs
+df_acs <- read_csv("output/acs_query_data.csv",
+                   col_types = cols(.default = "c")) %>%
+  mutate_at(c("estimate", "moe"), as.numeric)
 ```
 
 ```{r}
-df_acs %>% 
+df_map %>% 
+  left_join(df_acs) %>% 
   ggplot() +
-    geom_sf(aes(fill = estimate)) +
+    geom_sf(aes(fill = estimate), color = NA) +
     facet_wrap(~variable, ncol = 1) +
     scale_fill_viridis_c() +
     theme_void()
@@ -103,7 +115,6 @@ df_acs %>%
 ```{r}
 df_cluster <- df_acs %>% 
   select(GEOID, variable, estimate) %>% 
-  st_set_geometry(NULL) %>% 
   pivot_wider(names_from = variable, values_from = estimate, names_prefix = "var_") %>% 
   remove_empty(which = c("cols"))
 ```
@@ -117,7 +128,6 @@ hc1 <- hclust(d, method = "complete" )
 
 # Plot the obtained dendrogram
 plot(hc1, cex = 0.6, hang = -1)
-
 ```
 
 ```{r}
@@ -162,7 +172,7 @@ pltree(hc4, cex = 0.6, hang = -1, main = "Dendrogram of diana")
 hc5 <- hclust(d, method = "ward.D2" )
 
 # Cut tree into 4 groups
-sub_grp <- cutree(hc5, k = 4)
+sub_grp <- cutree(hc5, k = 8)
 
 # Number of members in each cluster
 table(sub_grp)
@@ -188,15 +198,11 @@ fviz_cluster(list(data = df_cluster, cluster = sub_grp))
 
 ```{r}
 df_cluster_map <- df_cluster %>%
-  mutate(cluster = sub_grp) %>% 
+  mutate(cluster = as.factor(sub_grp)) %>% 
   select(-contains("var"))
 
-df_acs %>% 
-  select(GEOID) %>% 
-  distinct(GEOID)
-  right_join(df_cluster_map) %>%  
-  select(GEOID, cluster) %>% 
-  distinct(GEOID, cluster)
+df_map %>% 
+  left_join(df_cluster_map) %>% 
   ggplot() +
-    geom_sf(aes(fill = cluster))
+    geom_sf(aes(fill = cluster), color = "grey")
 ```
